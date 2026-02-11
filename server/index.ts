@@ -14,6 +14,9 @@ const uploadsDir = path.resolve(process.cwd(), "uploads");
 async function main() {
   const app = express();
 
+  // ✅ IMPORTANT FOR RENDER (FIX GOOGLE LOGIN)
+  app.set("trust proxy", 1);
+
   // body parsers
   app.use(express.json({ limit: "2mb" }));
   app.use(express.urlencoded({ extended: true }));
@@ -38,14 +41,13 @@ async function main() {
   if (fs.existsSync(publicDir)) {
     app.use(express.static(publicDir));
 
-    // ✅ IMPORTANT:
-    // SPA fallback must be GET only
-    // so POST /api/... does NOT get index.html
     app.get("*", (_req, res) => {
       res.sendFile(indexHtml);
     });
   } else {
-    app.get("/", (_req, res) => res.status(200).send("Server running (client not built)"));
+    app.get("/", (_req, res) =>
+      res.status(200).send("Server running (client not built)")
+    );
   }
 
   const port = Number(process.env.PORT || 3000);
