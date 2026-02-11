@@ -1,34 +1,26 @@
 // FILE: server/routes.ts
 import type { Express, Request, Response } from "express";
 import { storage } from "./storage";
-
 import {
-  // ✅ auth schemas (fix .then crash)
-  RegisterInputSchema,
-  LoginInputSchema,
-
-  // profile/job/pdf schemas
-  UpdateProfileInputSchema,
   AnalyzeCvInputSchema,
   GenerateMaterialsInputSchema,
   JobMatchInputSchema,
   JobSearchInputSchema,
   SaveJobApplicationInputSchema,
   PdfInputSchema,
+  RegisterInputSchema,
+  LoginInputSchema,
 } from "../shared/routes";
-
 import { analyzeCvText, aiGenerate, aiMatch, buildSearchQueryFromResume } from "./openai";
 import { searchJobsUK } from "./serper";
 import { rerankJobsWithJina } from "./jina";
 import { createPdfFromText } from "./services/pdf";
-
 import { getAuthedUser, requireAuth, registerWithEmailPassword, loginWithEmailPassword } from "./auth";
 
 import multer from "multer";
 import pdfParse from "pdf-parse";
 import mammoth from "mammoth";
 import path from "path";
-import fs from "fs";
 
 function safeTrim(s: any, fallback = "") {
   const t = String(s ?? "").trim();
@@ -37,49 +29,13 @@ function safeTrim(s: any, fallback = "") {
 
 function isAutoQuery(q: string) {
   const t = safeTrim(q).toLowerCase();
+
+  // Accept common UI labels / variants
   if (t === "auto" || t === "auto-from-cv" || t === "from-cv") return true;
   if (t === "auto from cv" || t === "auto (from cv)" || t === "auto-from-cv)") return true;
   if (t.includes("auto") && t.includes("cv")) return true;
+
   return false;
-}
-
-// uploads folder (served by server/index.ts at /uploads)
-const uploadsDir = path.resolve(process.cwd(), "uploads");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, uploadsDir),
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname || "");
-      const base = path
-        .basename(file.originalname || "cv", ext)
-        .replace(/[^\w\-]+/g, "_")
-        .slice(0, 60);
-      cb(null, `${Date.now()}_${base}${ext}`);
-    },
-  }),
-  limits: { fileSize: 1 * 1024 * 1024 }, // 1MB
-});
-
-async function extractTextFromUploadedFile(filePath: string, originalName: string) {
-  const lower = String(originalName || "").toLowerCase();
-
-  if (lower.endsWith(".pdf")) {
-    const buf = fs.readFileSync(filePath);
-    const out = await pdfParse(buf);
-    return String(out.text || "").trim();
-  }
-
-  if (lower.endsWith(".docx")) {
-    const buf = fs.readFileSync(filePath);
-    const out = await mammoth.extractRawText({ buffer: buf });
-    return String(out.value || "").trim();
-  }
-
-  // default: treat as text
-  const buf = fs.readFileSync(filePath);
-  return buf.toString("utf-8").trim();
 }
 
 export async function registerRoutes(app: Express) {
@@ -90,7 +46,6 @@ export async function registerRoutes(app: Express) {
   // -----------------------------
   app.post("/api/auth/register", async (req: Request, res: Response) => {
     try {
-      // ✅ FIX: no dynamic import + .then
       const parsed = RegisterInputSchema.parse(req.body);
       const user = await registerWithEmailPassword(parsed);
 
@@ -105,10 +60,9 @@ export async function registerRoutes(app: Express) {
 
   app.post("/api/auth/login", async (req: Request, res: Response) => {
     try {
-      // ✅ FIX: no dynamic import + .then
       const parsed = LoginInputSchema.parse(req.body);
-      const user = await loginWithEmailPassword(parsed);
 
+      const user = await loginWithEmailPassword(parsed);
       (req as any).login(user, (err: any) => {
         if (err) return res.status(500).json({ error: "Login failed" });
         return res.json(user);
@@ -120,21 +74,14 @@ export async function registerRoutes(app: Express) {
 
   app.post("/api/auth/logout", (req: any, res: any) => {
     try {
-      req.logout?.(() => {
-        req.session?.destroy?.(() => res.json({ ok: true }));
-      });
-    } catch {
-      res.json({ ok: true });
-    }
+      req.logout?.(() => {});
+    } catch {}
+    req.session?.destroy?.(() => {});
+    res.json({ ok: true });
   });
 
   app.get("/api/auth/me", (req: any, res: any) => {
-    try {
-      if (req.isAuthenticated?.() && req.user) return res.json(req.user);
-      return res.json(null);
-    } catch {
-      return res.json(null);
-    }
+    res.json(req.user ?? null);
   });
 
   // -----------------------------
@@ -144,67 +91,79 @@ export async function registerRoutes(app: Express) {
     try {
       const user = getAuthedUser(req);
       const profile = await (storage as any).getUserProfile?.(user.id);
-      res.json(profile ?? null);
+      return res.json(profile ?? null);
     } catch (e: any) {
-      res.status(400).json({ error: e?.message || "Failed to fetch profile" });
+      return res.status(400).json({ error: e?.message || "Failed to load profile" });
     }
   });
 
   app.patch("/api/profile", requireAuth, async (req: any, res: any) => {
     try {
       const user = getAuthedUser(req);
-      const body = UpdateProfileInputSchema.parse(req.body);
-      const out = await (storage as any).upsertUserProfile?.(user.id, body);
-      res.json(out);
+      const updates = req.body || {};
+      const out = await (storage as any).upsertUserProfile?.(user.id, updates);
+      return res.json(out);
     } catch (e: any) {
-      res.status(400).json({ error: e?.message || "Failed to update profile" });
+      return res.status(400).json({ error: e?.message || "Profile update failed" });
     }
   });
 
-  // Upload CV (pdf/docx/txt)
-  app.post("/api/profile/upload-cv", requireAuth, upload.single("file"), async (req: any, res: any) => {
-    try {
-      const file = req.file;
-      if (!file) return res.status(400).json({ error: "No file uploaded" });
-
-      const text = await extractTextFromUploadedFile(file.path, file.originalname);
-      if (text.length < 10) return res.status(400).json({ error: "Extracted text is empty" });
-
-      // public URL via /uploads static
-      const fileUrl = `/uploads/${path.basename(file.path)}`;
-
-      // save to profile too (optional but useful)
-      try {
-        const user = getAuthedUser(req);
-        await (storage as any).upsertUserProfile?.(user.id, { resumeText: text, cvFileUrl: fileUrl });
-      } catch {}
-
-      return res.json({ ok: true, text, filename: file.originalname, fileUrl });
-    } catch (e: any) {
-      return res.status(400).json({ error: e?.message || "Upload failed" });
-    }
+  // -----------------------------
+  // CV UPLOAD (Profile)
+  // -----------------------------
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 1 * 1024 * 1024 }, // 1MB
   });
 
-  // ✅ Compatibility alias (ApplyWizard uses /api/resume/upload in some code)
-  app.post("/api/resume/upload", requireAuth, upload.single("file"), async (req: any, res: any) => {
-    try {
-      const file = req.file;
-      if (!file) return res.status(400).json({ error: "No file uploaded" });
+  async function extractTextFromBuffer(file: Express.Multer.File) {
+    const name = (file.originalname || "").toLowerCase();
 
-      const text = await extractTextFromUploadedFile(file.path, file.originalname);
-      if (text.length < 10) return res.status(400).json({ error: "Extracted text is empty" });
-
-      const fileUrl = `/uploads/${path.basename(file.path)}`;
-
-      try {
-        const user = getAuthedUser(req);
-        await (storage as any).upsertUserProfile?.(user.id, { resumeText: text, cvFileUrl: fileUrl });
-      } catch {}
-
-      return res.json({ ok: true, text, filename: file.originalname, fileUrl });
-    } catch (e: any) {
-      return res.status(400).json({ error: e?.message || "Upload failed" });
+    if (name.endsWith(".pdf")) {
+      const out = await pdfParse(file.buffer);
+      return (out.text || "").trim();
     }
+
+    if (name.endsWith(".docx")) {
+      const out = await mammoth.extractRawText({ buffer: file.buffer });
+      return (out.value || "").trim();
+    }
+
+    if (name.endsWith(".txt")) {
+      return file.buffer.toString("utf8").trim();
+    }
+
+    // fallback: تلاش برای متن ساده (اگر کاربر پسوند اشتباه داد)
+    const asText = file.buffer.toString("utf8").trim();
+    if (asText.length > 30) return asText;
+
+    throw new Error("Unsupported file type. Please upload .pdf, .docx, or .txt.");
+  }
+
+  app.post("/api/profile/upload-cv", requireAuth, async (req: any, res: any) => {
+    upload.single("file")(req, res, async (err: any) => {
+      try {
+        if (err) return res.status(400).json({ error: err?.message || "Upload failed" });
+        const file = req.file as Express.Multer.File | undefined;
+        if (!file) return res.status(400).json({ error: "No file" });
+
+        const text = await extractTextFromBuffer(file);
+
+        if (!text || text.length < 10) {
+          return res.status(400).json({ error: "Could not extract text. Try another file or paste manually." });
+        }
+
+        const user = getAuthedUser(req);
+        const out = await (storage as any).upsertUserProfile?.(user.id, {
+          resumeText: text,
+          cvFileUrl: null,
+        });
+
+        return res.json({ ok: true, filename: file.originalname, text, profile: out ?? null });
+      } catch (e: any) {
+        return res.status(400).json({ error: e?.message || "Upload failed" });
+      }
+    });
   });
 
   app.post("/api/profile/analyze-cv", requireAuth, async (req: any, res: any) => {
@@ -293,10 +252,10 @@ export async function registerRoutes(app: Express) {
   app.get("/api/jobs/saved", requireAuth, async (req: any, res: any) => {
     try {
       const user = getAuthedUser(req);
-      const rows = await (storage as any).listSavedJobs?.(user.id);
-      return res.json(rows ?? []);
+      const out = await (storage as any).listSavedJobs?.(user.id);
+      return res.json(out ?? []);
     } catch (e: any) {
-      return res.status(400).json({ error: e?.message || "List failed" });
+      return res.status(400).json({ error: e?.message || "Load saved jobs failed" });
     }
   });
 
@@ -306,13 +265,34 @@ export async function registerRoutes(app: Express) {
   app.post("/api/pdf", requireAuth, async (req: Request, res: Response) => {
     try {
       const body = PdfInputSchema.parse(req.body);
-      const buf = await createPdfFromText(body.content);
+
+      const buf = await createPdfFromText({
+        title: safeTrim((body as any).title, "Document"),
+        content: body.content,
+      } as any);
 
       res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `attachment; filename="${safeTrim(body.title, "document")}.pdf"`);
-      return res.send(buf);
+      return res.status(200).send(buf);
     } catch (e: any) {
       return res.status(400).json({ error: e?.message || "PDF failed" });
     }
+  });
+
+  // -----------------------------
+  // (اختیاری) اگر جایی resume/upload داری، اینجا نگهش می‌داریم:
+  // -----------------------------
+  app.post("/api/resume/upload", requireAuth, async (req: any, res: any) => {
+    upload.single("file")(req, res, async (err: any) => {
+      try {
+        if (err) return res.status(400).json({ error: err?.message || "Upload failed" });
+        const file = req.file as Express.Multer.File | undefined;
+        if (!file) return res.status(400).json({ error: "No file" });
+
+        const text = await extractTextFromBuffer(file);
+        return res.json({ ok: true, filename: file.originalname, text });
+      } catch (e: any) {
+        return res.status(400).json({ error: e?.message || "Upload failed" });
+      }
+    });
   });
 }
