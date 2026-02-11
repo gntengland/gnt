@@ -72,6 +72,10 @@ export async function apiRequest(method: string, url: string, body?: any) {
 
   // ✅ OK but NOT JSON (and not binary): this is a client/server mismatch.
   // Read body only to detect HTML and provide a clear message, then throw.
+  // ✅ Allow PDF/binary responses without consuming body
+if (res.ok && contentType.toLowerCase().includes("application/pdf")) {
+  return res;
+}
   const raw = await readTextSafe(res);
 
   if (looksLikeHtml(raw)) {
