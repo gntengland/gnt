@@ -497,27 +497,30 @@ export async function textToPdfBuffer(titleOrInput: PdfInput, content?: string, 
     drawSectionTitle("Content");
     drawParagraph(raw.trim());
   }
+  // Footer (page numbers) ✅ FIX: handle buffered page range start index
+  const range = doc.bufferedPageRange();
+  const start = range.start;
+  const totalPages = range.count;
 
-// Footer (page numbers) ✅ FIX: handle buffered page range start index
-const range = doc.bufferedPageRange();
-const start = range.start;
-const totalPages = range.count;
+  for (let i = start; i < start + totalPages; i++) {
+    doc.switchToPage(i);
 
-for (let i = start; i < start + totalPages; i++) {
-  doc.switchToPage(i);
+    const pageNumber = i - start + 1;
 
-  const pageNumber = i - start + 1;
+    doc.save();
+    doc.fillColor(THEME.muted);
+    doc.font(F.sans).fontSize(9);
+    doc.text(
+      `Page ${pageNumber} of ${totalPages}`,
+      margin,
+      pageH - doc.page.margins.bottom + 18,
+      { width: contentW, align: "right" },
+    );
+    doc.restore();
+  }
 
-  doc.save();
-  doc.fillColor(THEME.muted);
-  doc.font(F.sans).fontSize(9);
-  doc.text(
-    `Page ${pageNumber} of ${totalPages}`,
-    margin,
-    pageH - doc.page.margins.bottom + 18,
-    { width: contentW, align: "right" },
-  );
-  doc.restore();
+  // ✅ IMPORTANT: finalize the PDF
+  doc.end();
 }
 
 // ✅ Compatibility export (your server/routes.ts imports this name)
