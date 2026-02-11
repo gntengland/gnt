@@ -9,7 +9,8 @@ import path from "node:path";
 const allowlist = [
   "@google/generative-ai",
   "axios",
-  "connect-pg-simple",
+  // ❌ IMPORTANT: DO NOT bundle connect-pg-simple (needs table.sql at runtime)
+  // "connect-pg-simple",
   "cors",
   "date-fns",
   "drizzle-orm",
