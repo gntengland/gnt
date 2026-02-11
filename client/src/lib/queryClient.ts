@@ -10,28 +10,23 @@ function looksLikeHtml(s: string) {
   return t.startsWith("<!doctype html") || t.startsWith("<html");
 }
 
-function isProbablyBinary(contentType: string) {
-  const ct = (contentType || "").toLowerCase();
-
-  // ✅ allow binary types (PDF downloads etc.)
-  if (ct.includes("application/pdf")) return true;
-  if (ct.includes("application/octet-stream")) return true;
-
-  // images
-  if (ct.startsWith("image/")) return true;
-
-  // other binary-ish (safe)
-  if (ct.includes("application/zip")) return true;
-
-  return false;
+function isBinaryContentType(ct: string) {
+  const t = (ct || "").toLowerCase();
+  return (
+    t.includes("application/pdf") ||
+    t.includes("application/octet-stream") ||
+    t.includes("application/zip") ||
+    t.startsWith("image/")
+  );
 }
 
 /**
- * ✅ Stable API helper:
+ * ✅ Stable API helper (FIXED):
  * - Always includes credentials
  * - Produces clean error messages
  * - Detects HTML (SPA fallback / proxy / wrong route) and fails fast
- * - ✅ Allows binary responses (e.g., application/pdf) without throwing
+ * - ✅ Allows binary responses (PDF) without consuming body
+ * - ✅ Never consumes body on successful JSON responses
  */
 export async function apiRequest(method: string, url: string, body?: any) {
   const res = await fetch(url, {
@@ -43,29 +38,30 @@ export async function apiRequest(method: string, url: string, body?: any) {
 
   const contentType = (res.headers.get("content-type") || "").toLowerCase();
 
-  // ✅ If response is OK and is binary (PDF, images, etc.), return it directly.
-  // Caller will use res.blob() or res.arrayBuffer().
-  if (res.ok && isProbablyBinary(contentType)) {
+  // ✅ If OK and binary (PDF download, etc.), return as-is.
+  // Caller will do res.blob().
+  if (res.ok && isBinaryContentType(contentType)) {
     return res;
   }
 
-  // For JSON/text OR for errors we read text to:
-  // - detect HTML fallback
-  // - build good error messages
-  const raw = await readTextSafe(res);
-
-  // ❌ If server returned HTML, this is almost always:
-  // - wrong route / missing route
-  // - SPA fallback responding
-  // - proxy misrouting
-  if (looksLikeHtml(raw)) {
-    throw new Error(
-      `Server returned HTML instead of JSON. This usually means the API route is missing or misrouted: ${method} ${url}`,
-    );
+  // ✅ If OK and JSON -> return as-is.
+  // Caller will do res.json().
+  if (res.ok && contentType.includes("application/json")) {
+    return res;
   }
 
-  // If not ok -> show server error (json or text)
+  // ❌ If not OK: read body ONCE to create a useful error, then throw.
   if (!res.ok) {
+    const raw = await readTextSafe(res);
+
+    // HTML usually indicates route/proxy fallback
+    if (looksLikeHtml(raw)) {
+      throw new Error(
+        `Server returned HTML instead of JSON. This usually means the API route is missing or misrouted: ${method} ${url}`,
+      );
+    }
+
+    // Try parse JSON error
     try {
       const j = JSON.parse(raw);
       throw new Error(j?.error || j?.message || raw || `Request failed: ${res.status}`);
@@ -74,14 +70,22 @@ export async function apiRequest(method: string, url: string, body?: any) {
     }
   }
 
-  // ✅ OK responses:
-  // If caller expects JSON, they will do res.json().
-  // But guard non-JSON ok responses (except empty).
-  if (contentType && !contentType.includes("application/json") && raw) {
-    throw new Error(`Expected JSON but got "${contentType}". Endpoint: ${method} ${url}`);
+  // ✅ OK but NOT JSON (and not binary): this is a client/server mismatch.
+  // Read body only to detect HTML and provide a clear message, then throw.
+  const raw = await readTextSafe(res);
+
+  if (looksLikeHtml(raw)) {
+    throw new Error(
+      `Server returned HTML instead of JSON. This usually means the API route is missing or misrouted: ${method} ${url}`,
+    );
   }
 
-  return res;
+  // If it's plain text or something unexpected, throw with the content-type
+  throw new Error(`Expected JSON but got "${contentType}". Endpoint: ${method} ${url}`);
 }
 
-export const queryClient = new QueryClient();
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: 1, refetchOnWindowFocus: false },
+  },
+});
