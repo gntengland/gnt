@@ -135,21 +135,36 @@ export default function GenerateStep({
     }
   }
 
+  // ✅ IMPORTANT: PDF must NOT use apiRequest (apiRequest assumes JSON and consumes body)
   async function downloadPdf(pdfTitle: string, content: string) {
     setDownloading(pdfTitle);
     try {
-      const res = await apiRequest("POST", "/api/pdf", {
-        title: pdfTitle,
-        content,
-        filename: toSafeFilename(pdfTitle) + ".pdf",
+      const res = await fetch("/api/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          title: pdfTitle,
+          content,
+          filename: toSafeFilename(pdfTitle) + ".pdf",
+        }),
       });
+
+      if (!res.ok) {
+        const raw = await res.text().catch(() => "");
+        try {
+          const j = JSON.parse(raw);
+          throw new Error(j?.error || j?.message || raw || `Request failed: ${res.status}`);
+        } catch {
+          throw new Error(raw || `Request failed: ${res.status}`);
+        }
+      }
 
       const ct = (res.headers.get("content-type") || "").toLowerCase();
       if (!ct.includes("application/pdf")) {
         const txt = await res.text().catch(() => "");
         throw new Error(
-          `Server returned HTML instead of PDF. This usually means the API route is missing or misrouted: POST /api/pdf` +
-            (txt ? `\n\n${txt.slice(0, 400)}` : ""),
+          `Expected PDF but got "${ct || "unknown"}". Endpoint: POST /api/pdf` + (txt ? `\n\n${txt.slice(0, 400)}` : ""),
         );
       }
 
