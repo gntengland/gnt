@@ -10,7 +10,6 @@ type PdfInput =
       content: string;
       author?: string;
       subject?: string;
-      // optional: if you want to force a mode in future
       mode?: "resume" | "cover" | "qa" | "auto";
     };
 
@@ -66,7 +65,6 @@ function looksLikeHeading(line: string) {
   const t = (line || "").trim();
   if (!t) return false;
 
-  // Common headings
   if (
     /^(professional summary|summary|experience|work experience|education|skills|technical skills|projects|certifications|additional information|profile|cover letter|interview q&a|interview qa)$/i.test(
       t,
@@ -74,29 +72,21 @@ function looksLikeHeading(line: string) {
   )
     return true;
 
-  // ALL CAPS headings
   if (isAllCaps(t)) return true;
 
-  // Short title-like line
   if (t.length <= 48 && /^[A-Za-z][A-Za-z0-9 &/(),.-]+$/.test(t)) return true;
 
   return false;
 }
 
+/**
+ * IMPORTANT:
+ * - This adds a new page when needed
+ * - Header is redrawn automatically using the `pageAdded` handler (below)
+ */
 function ensureSpace(doc: PDFKit.PDFDocument, px: number) {
   const bottom = doc.page.height - doc.page.margins.bottom;
   if (doc.y + px > bottom) doc.addPage();
-}
-
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-  const h = hex.replace("#", "").trim();
-  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
-  const n = parseInt(full, 16);
-  return {
-    r: (n >> 16) & 255,
-    g: (n >> 8) & 255,
-    b: n & 255,
-  };
 }
 
 function resolveFontsDir(): string | null {
@@ -123,29 +113,27 @@ function listTtf(fontsDir: string): string[] {
  * Auto-detect fonts:
  * - Prefer Inter for sans (Regular/Bold)
  * - Prefer EBGaramond for serif (Regular/Bold)
- * - If your filenames differ, this still tries to match "inter" / "garamond"
  */
 function pickFonts(fontFiles: string[]) {
   const lower = fontFiles.map((p) => ({ p, n: path.basename(p).toLowerCase() }));
 
   const pick = (includesAll: string[], includesAny: string[] = []) => {
-    const found = lower.find((x) => includesAll.every((k) => x.n.includes(k)) && (includesAny.length ? includesAny.some((k) => x.n.includes(k)) : true));
+    const found = lower.find(
+      (x) =>
+        includesAll.every((k) => x.n.includes(k)) &&
+        (includesAny.length ? includesAny.some((k) => x.n.includes(k)) : true),
+    );
     return found?.p || null;
   };
 
-  // Inter
   const interRegular =
     pick(["inter", "regular"]) ||
     pick(["inter"], ["regular", "book", "text"]) ||
     pick(["inter"]) ||
     null;
 
-  const interBold =
-    pick(["inter", "bold"]) ||
-    pick(["inter"], ["semibold", "bold"]) ||
-    null;
+  const interBold = pick(["inter", "bold"]) || pick(["inter"], ["semibold", "bold"]) || null;
 
-  // Garamond
   const garRegular =
     pick(["garamond", "regular"]) ||
     pick(["ebgaramond", "regular"]) ||
@@ -166,7 +154,6 @@ function pickFonts(fontFiles: string[]) {
 function registerThemeFonts(doc: PDFKit.PDFDocument) {
   const fontsDir = resolveFontsDir();
 
-  // Built-in fallback
   const F = {
     sans: "Helvetica",
     sansBold: "Helvetica-Bold",
@@ -226,7 +213,6 @@ function stripDecorativeUnderlines(lines: string[]) {
 }
 
 function detectQA(lines: string[]) {
-  // Q: ... / A: ...
   let qCount = 0;
   let aCount = 0;
   for (const raw of lines) {
@@ -261,7 +247,6 @@ function parseQA(lines: string[]) {
       continue;
     }
 
-    // continuation lines
     if (a) a += " " + line;
     else if (q) q += " " + line;
   }
@@ -270,9 +255,18 @@ function parseQA(lines: string[]) {
 }
 
 /**
- * Main: pretty, themed PDF with accent colors.
+ * Main: themed PDF.
+ * Fixes included:
+ * - Header redraw on every page (pageAdded handler)
+ * - Footer position inside page (not outside)
+ * - Correct page numbering with bufferPages
+ * - Footer also applied in QA mode
  */
-export async function textToPdfBuffer(titleOrInput: PdfInput, content?: string, author?: string): Promise<Buffer> {
+export async function textToPdfBuffer(
+  titleOrInput: PdfInput,
+  content?: string,
+  author?: string,
+): Promise<Buffer> {
   const input: { title?: string; content: string; author?: string; subject?: string; mode?: "resume" | "cover" | "qa" | "auto" } =
     typeof titleOrInput === "string"
       ? { title: titleOrInput, content: content || "", author }
@@ -281,26 +275,26 @@ export async function textToPdfBuffer(titleOrInput: PdfInput, content?: string, 
   const title = safeTitle(input.title);
   const raw = normalizeNewlines(input.content || "").trim();
 
-  // ---- Theme (you can tweak these) ----
   const THEME = {
-    // Accent = teal/blue-ish (professional). Change if you like.
-    accent: "#0F766E", // teal 700
+    accent: "#0F766E",
     accentSoft: "#0F766E",
     ink: "#111111",
     muted: "#444444",
     light: "#F3F4F6",
   };
-const doc = new PDFDocument({
-  size: "A4",
-  margins: { top: 54, left: 54, right: 54, bottom: 54 },
-  compress: true,
-  bufferPages: true, // ✅ IMPORTANT: enables correct total page count + switchToPage
-  info: {
-    Title: title,
-    Author: input.author ?? "Agent",
-    Subject: input.subject ?? "",
-  },
-});
+
+  const doc = new PDFDocument({
+    size: "A4",
+    margins: { top: 54, left: 54, right: 54, bottom: 54 },
+    compress: true,
+    bufferPages: true,
+    info: {
+      Title: title,
+      Author: input.author ?? "Agent",
+      Subject: input.subject ?? "",
+    },
+  });
+
   const chunks: Buffer[] = [];
   doc.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
   const done = new Promise<Buffer>((resolve, reject) => {
@@ -310,32 +304,40 @@ const doc = new PDFDocument({
 
   const { F } = registerThemeFonts(doc);
 
-  const pageW = doc.page.width;
-  const pageH = doc.page.height;
-  const margin = doc.page.margins.left;
-  const contentW = pageW - doc.page.margins.left - doc.page.margins.right;
+  const getGeom = () => {
+    const pageW = doc.page.width;
+    const pageH = doc.page.height;
+    const margin = doc.page.margins.left;
+    const contentW = pageW - doc.page.margins.left - doc.page.margins.right;
+    return { pageW, pageH, margin, contentW };
+  };
 
-  // ---- Header band (color) ----
   const bandH = 64;
-  doc.save();
-  doc.rect(0, 0, pageW, bandH).fill(THEME.accent);
-  doc.restore();
 
-  // Title on the band
-  doc.fillColor("#FFFFFF");
-  doc.font(F.sansBold).fontSize(18);
-  doc.text(title, margin, 22, { width: contentW });
+  const drawHeader = () => {
+    const { pageW, margin, contentW } = getGeom();
 
-  // Small subtitle/date
+    doc.save();
+    doc.rect(0, 0, pageW, bandH).fill(THEME.accent);
+    doc.restore();
 
-  // Move cursor below header band
-  doc.y = bandH + 18;
+    doc.fillColor("#FFFFFF");
+    doc.font(F.sansBold).fontSize(18);
+    doc.text(title, margin, 22, { width: contentW });
 
-  // Accent divider
-  doc.save();
-  doc.rect(margin, doc.y, contentW, 2).fill(THEME.accentSoft);
-  doc.restore();
-  doc.y += 14;
+    // Move cursor below header band
+    doc.y = bandH + 18;
+
+    // Accent divider
+    doc.save();
+    doc.rect(margin, doc.y, contentW, 2).fill(THEME.accentSoft);
+    doc.restore();
+    doc.y += 14;
+  };
+
+  // ✅ Draw header for first page + every new page
+  drawHeader();
+  doc.on("pageAdded", drawHeader);
 
   // ---- Content prep ----
   let lines = splitLines(raw);
@@ -346,15 +348,15 @@ const doc = new PDFDocument({
 
   const drawSectionTitle = (t: string) => {
     ensureSpace(doc, 52);
+    const { margin, contentW } = getGeom();
 
-    // Soft background chip
     const y = doc.y;
     const chipH = 18;
+
     doc.save();
     doc.rect(margin, y - 2, contentW, chipH + 6).fill(THEME.light);
     doc.restore();
 
-    // Accent bar
     doc.save();
     doc.rect(margin, y - 2, 6, chipH + 6).fill(THEME.accent);
     doc.restore();
@@ -368,6 +370,8 @@ const doc = new PDFDocument({
 
   const drawParagraph = (t: string) => {
     ensureSpace(doc, 22);
+    const { contentW } = getGeom();
+
     doc.fillColor(THEME.ink);
     doc.font(F.serif).fontSize(11);
     doc.text(t.trim(), { width: contentW, align: "left", lineGap: 3 });
@@ -376,6 +380,8 @@ const doc = new PDFDocument({
 
   const drawSubheading = (t: string) => {
     ensureSpace(doc, 18);
+    const { contentW } = getGeom();
+
     doc.fillColor(THEME.ink);
     doc.font(F.serifBold).fontSize(11);
     doc.text(t.trim(), { width: contentW });
@@ -384,11 +390,13 @@ const doc = new PDFDocument({
 
   const drawBullet = (t: string) => {
     ensureSpace(doc, 18);
+    const { margin, contentW } = getGeom();
+
     const clean = t.trim().replace(/^[-•]\s+/, "").trim();
 
-    // small accent dot
     const dotX = margin;
     const dotY = doc.y + 4;
+
     doc.save();
     doc.fillColor(THEME.accent);
     doc.circle(dotX + 4, dotY + 4, 2.2).fill();
@@ -402,11 +410,11 @@ const doc = new PDFDocument({
 
   const drawQA = (q: string, a: string) => {
     ensureSpace(doc, 80);
+    const { margin, contentW } = getGeom();
 
-    // Q box
     doc.save();
     const qY = doc.y;
-    doc.rect(margin, qY - 2, contentW, 22).fill("#EEF2FF"); // soft indigo background
+    doc.rect(margin, qY - 2, contentW, 22).fill("#EEF2FF");
     doc.restore();
 
     doc.fillColor("#111827");
@@ -415,17 +423,16 @@ const doc = new PDFDocument({
 
     doc.y += 28;
 
-    // A
     doc.fillColor(THEME.ink);
     doc.font(F.serif).fontSize(11);
     doc.text(`A: ${a}`, { width: contentW, lineGap: 3 });
     doc.moveDown(0.6);
 
-    // tiny divider
     doc.save();
     doc.fillColor("#E5E7EB");
     doc.rect(margin, doc.y, contentW, 1).fill();
     doc.restore();
+
     doc.y += 10;
   };
 
@@ -434,107 +441,89 @@ const doc = new PDFDocument({
     const blocks = parseQA(lines);
     drawSectionTitle("Interview Q&A");
     for (const b of blocks) drawQA(b.q, b.a);
+  } else {
+    let buffer: string[] = [];
+    const flush = () => {
+      const block = buffer.join("\n").trim();
+      buffer = [];
+      if (!block) return;
 
-    doc.end();
-    return done;
-  }
+      const parts = block.split("\n").map((x) => x.trim());
+      for (const p of parts) {
+        if (!p) continue;
 
-  // Generic resume/cover rendering: headings + bullets + paragraphs
-  let buffer: string[] = [];
-  const flush = () => {
-    const block = buffer.join("\n").trim();
-    buffer = [];
-    if (!block) return;
+        if (isBullet(p)) {
+          drawBullet(p.replace(/^[-•]\s+/, ""));
+          continue;
+        }
 
-    const parts = block.split("\n").map((x) => x.trim());
-    for (const p of parts) {
-      if (!p) continue;
+        if (p.length <= 120 && (p.includes("—") || p.includes("|") || /\b(20\d{2}|19\d{2})\b/.test(p))) {
+          drawSubheading(p);
+          continue;
+        }
 
-      if (isBullet(p)) {
-        drawBullet(p.replace(/^[-•]\s+/, ""));
+        drawParagraph(p);
+      }
+    };
+
+    let sawHeading = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = (lines[i] || "").trim();
+
+      if (!line) {
+        flush();
         continue;
       }
 
-      // subheading heuristic: company/role/date style lines
-      if (p.length <= 120 && (p.includes("—") || p.includes("|") || /\b(20\d{2}|19\d{2})\b/.test(p))) {
-        drawSubheading(p);
+      if (/^resume$/i.test(line)) continue;
+
+      if (looksLikeHeading(line)) {
+        sawHeading = true;
+        flush();
+        drawSectionTitle(line);
         continue;
       }
 
-      drawParagraph(p);
+      buffer.push(lines[i] || "");
     }
-  };
+    flush();
 
-  let sawHeading = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = (lines[i] || "").trim();
-
-    if (!line) {
-      flush();
-      continue;
+    if (!sawHeading && raw.trim()) {
+      drawSectionTitle("Content");
+      drawParagraph(raw.trim());
     }
-
-    // skip lone "Resume"
-    if (/^resume$/i.test(line)) continue;
-
-    // heading (also handles "Heading" + underline already stripped)
-    if (looksLikeHeading(line)) {
-      sawHeading = true;
-      flush();
-      drawSectionTitle(line);
-      continue;
-    }
-
-    buffer.push(lines[i] || "");
   }
-  flush();
 
-  if (!sawHeading && raw.trim()) {
-    drawSectionTitle("Content");
-    drawParagraph(raw.trim());
-  }
-    // Footer (date + page numbers) ✅ FIX: reliable footer position + correct page index
+  // ---- Footer: ALWAYS apply (all pages) ----
+  const generatedOn = new Date().toISOString().slice(0, 10);
+
   const range = doc.bufferedPageRange();
   const start = range.start;
   const totalPages = range.count;
-
-  // تاریخ را یک‌بار ثابت نگه دار (همه صفحات یکی باشند)
-  const generatedOn = new Date().toISOString().slice(0, 10);
 
   for (let i = start; i < start + totalPages; i++) {
     doc.switchToPage(i);
 
     const pageNumber = i - start + 1;
 
-    // ✅ IMPORTANT: compute footer geometry AFTER switchToPage (per-page)
     const footerX = doc.page.margins.left;
     const footerW = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-    const footerY = doc.page.height - doc.page.margins.bottom + 14; // داخل ناحیه margin پایین
+
+    // ✅ FIX: must be INSIDE the page (NOT +14)
+    const footerY = doc.page.height - doc.page.margins.bottom - 18;
 
     doc.save();
     doc.fillColor(THEME.muted);
     doc.font(F.sans).fontSize(9);
 
-    // Left: generated date
-    doc.text(`Generated on ${generatedOn}`, footerX, footerY, {
-      width: footerW,
-      align: "left",
-    });
-
-    // Right: page numbers
-    doc.text(`Page ${pageNumber} of ${totalPages}`, footerX, footerY, {
-      width: footerW,
-      align: "right",
-    });
+    doc.text(`Generated on ${generatedOn}`, footerX, footerY, { width: footerW, align: "left" });
+    doc.text(`Page ${pageNumber} of ${totalPages}`, footerX, footerY, { width: footerW, align: "right" });
 
     doc.restore();
   }
 
-  // ✅ IMPORTANT: if bufferPages enabled, flush buffered pages AFTER writing footers
   doc.flushPages();
-
-  // ✅ finalize the PDF
   doc.end();
   return done;
 }
