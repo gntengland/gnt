@@ -292,7 +292,7 @@ export async function textToPdfBuffer(titleOrInput: PdfInput, content?: string, 
   };
 const doc = new PDFDocument({
   size: "A4",
-  margin: 54,
+  margins: { top: 54, left: 54, right: 54, bottom: 54 },
   compress: true,
   bufferPages: true, // ✅ IMPORTANT: enables correct total page count + switchToPage
   info: {
@@ -494,45 +494,47 @@ const doc = new PDFDocument({
     drawSectionTitle("Content");
     drawParagraph(raw.trim());
   }
-  // Footer (page numbers)
+    // Footer (date + page numbers) ✅ FIX: reliable footer position + correct page index
   const range = doc.bufferedPageRange();
   const start = range.start;
   const totalPages = range.count;
+
+  // تاریخ را یک‌بار ثابت نگه دار (همه صفحات یکی باشند)
+  const generatedOn = new Date().toISOString().slice(0, 10);
 
   for (let i = start; i < start + totalPages; i++) {
     doc.switchToPage(i);
 
     const pageNumber = i - start + 1;
 
+    // ✅ IMPORTANT: compute footer geometry AFTER switchToPage (per-page)
+    const footerX = doc.page.margins.left;
+    const footerW = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const footerY = doc.page.height - doc.page.margins.bottom + 14; // داخل ناحیه margin پایین
+
     doc.save();
     doc.fillColor(THEME.muted);
     doc.font(F.sans).fontSize(9);
 
-    const footerY = pageH - doc.page.margins.bottom + 18;
-
     // Left: generated date
-    doc.text(
-      `Generated on ${new Date().toISOString().slice(0, 10)}`,
-      margin,
-      footerY,
-      { width: contentW, align: "left" },
-    );
+    doc.text(`Generated on ${generatedOn}`, footerX, footerY, {
+      width: footerW,
+      align: "left",
+    });
 
     // Right: page numbers
-    doc.text(
-      `Page ${pageNumber} of ${totalPages}`,
-      margin,
-      footerY,
-      { width: contentW, align: "right" },
-    );
+    doc.text(`Page ${pageNumber} of ${totalPages}`, footerX, footerY, {
+      width: footerW,
+      align: "right",
+    });
 
     doc.restore();
   }
 
-  // ✅ IMPORTANT: write buffered pages out (needed for correct total page count)
+  // ✅ IMPORTANT: if bufferPages enabled, flush buffered pages AFTER writing footers
   doc.flushPages();
 
-  // ✅ IMPORTANT: finalize the PDF
+  // ✅ finalize the PDF
   doc.end();
   return done;
 }
