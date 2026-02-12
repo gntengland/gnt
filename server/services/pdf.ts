@@ -494,7 +494,7 @@ const doc = new PDFDocument({
     drawSectionTitle("Content");
     drawParagraph(raw.trim());
   }
-  // Footer (page numbers) ✅ FIX: handle buffered page range start index
+  // Footer (page numbers)
   const range = doc.bufferedPageRange();
   const start = range.start;
   const totalPages = range.count;
@@ -507,25 +507,35 @@ const doc = new PDFDocument({
     doc.save();
     doc.fillColor(THEME.muted);
     doc.font(F.sans).fontSize(9);
+
+    const footerY = pageH - doc.page.margins.bottom + 18;
+
     // Left: generated date
-doc.text(
-  `Generated on ${new Date().toISOString().slice(0, 10)}`,
-  margin,
-  pageH - doc.page.margins.bottom + 18,
-  { width: contentW, align: "left" },
-);
-// Right: page numbers
-doc.text(
-  `Page ${pageNumber} of ${totalPages}`,
-  margin,
-  pageH - doc.page.margins.bottom + 18,
-  { width: contentW, align: "right" },
-);
+    doc.text(
+      `Generated on ${new Date().toISOString().slice(0, 10)}`,
+      margin,
+      footerY,
+      { width: contentW, align: "left" },
+    );
+
+    // Right: page numbers
+    doc.text(
+      `Page ${pageNumber} of ${totalPages}`,
+      margin,
+      footerY,
+      { width: contentW, align: "right" },
+    );
+
     doc.restore();
   }
+
+  // ✅ IMPORTANT: write buffered pages out (needed for correct total page count)
+  doc.flushPages();
+
   // ✅ IMPORTANT: finalize the PDF
   doc.end();
   return done;
 }
+
 // ✅ Compatibility export (your server/routes.ts imports this name)
 export const createPdfFromText = textToPdfBuffer;
