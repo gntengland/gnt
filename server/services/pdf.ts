@@ -290,18 +290,17 @@ export async function textToPdfBuffer(titleOrInput: PdfInput, content?: string, 
     muted: "#444444",
     light: "#F3F4F6",
   };
-
-  const doc = new PDFDocument({
-    size: "A4",
-    margin: 54,
-    compress: true,
-    info: {
-      Title: title,
-      Author: input.author ?? "Agent",
-      Subject: input.subject ?? "",
-    },
-  });
-
+const doc = new PDFDocument({
+  size: "A4",
+  margin: 54,
+  compress: true,
+  bufferPages: true, // ✅ IMPORTANT: enables correct total page count + switchToPage
+  info: {
+    Title: title,
+    Author: input.author ?? "Agent",
+    Subject: input.subject ?? "",
+  },
+});
   const chunks: Buffer[] = [];
   doc.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
   const done = new Promise<Buffer>((resolve, reject) => {
