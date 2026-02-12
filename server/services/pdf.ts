@@ -328,8 +328,6 @@ export async function textToPdfBuffer(titleOrInput: PdfInput, content?: string, 
   doc.text(title, margin, 22, { width: contentW });
 
   // Small subtitle/date
-  doc.font(F.sans).fontSize(10).fillColor("#EAFBF8");
-  doc.text(new Date().toISOString().slice(0, 10), margin, 46, { width: contentW });
 
   // Move cursor below header band
   doc.y = bandH + 18;
@@ -510,19 +508,25 @@ export async function textToPdfBuffer(titleOrInput: PdfInput, content?: string, 
     doc.save();
     doc.fillColor(THEME.muted);
     doc.font(F.sans).fontSize(9);
-    doc.text(
-      `Page ${pageNumber} of ${totalPages}`,
-      margin,
-      pageH - doc.page.margins.bottom + 18,
-      { width: contentW, align: "right" },
-    );
+    // Left: generated date
+doc.text(
+  `Generated on ${new Date().toISOString().slice(0, 10)}`,
+  margin,
+  pageH - doc.page.margins.bottom + 18,
+  { width: contentW, align: "left" },
+);
+// Right: page numbers
+doc.text(
+  `Page ${pageNumber} of ${totalPages}`,
+  margin,
+  pageH - doc.page.margins.bottom + 18,
+  { width: contentW, align: "right" },
+);
     doc.restore();
   }
-
   // ✅ IMPORTANT: finalize the PDF
   doc.end();
   return done;
 }
-
 // ✅ Compatibility export (your server/routes.ts imports this name)
 export const createPdfFromText = textToPdfBuffer;
