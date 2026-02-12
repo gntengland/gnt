@@ -281,7 +281,8 @@ app.post("/api/pdf", requireAuth, async (req: Request, res: Response) => {
     }
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="resume.pdf"`);
+    const fname = safeTrim((body as any).filename, "document.pdf").replace(/[/\\"]/g, "_");
+    res.setHeader("Content-Disposition", `attachment; filename="${fname}"`);
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Length", String(buf.length));
 
