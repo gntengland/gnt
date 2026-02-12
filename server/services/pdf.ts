@@ -521,6 +521,7 @@ export async function textToPdfBuffer(titleOrInput: PdfInput, content?: string, 
 
   // ✅ IMPORTANT: finalize the PDF
   doc.end();
+  return done;
 }
 
 // ✅ Compatibility export (your server/routes.ts imports this name)
