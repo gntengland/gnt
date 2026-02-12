@@ -285,7 +285,7 @@ export async function textToPdfBuffer(
 
   const doc = new PDFDocument({
     size: "A4",
-    margins: { top: 54, left: 54, right: 54, bottom: 54 },
+    margins: { top: 54, left: 54, right: 54, bottom: 60 },
     compress: true,
     bufferPages: true,
     info: {
