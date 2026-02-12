@@ -511,7 +511,7 @@ export async function textToPdfBuffer(
     const footerW = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
     // ✅ FIX: must be INSIDE the page (NOT +14)
-    const footerY = doc.page.height - doc.page.margins.bottom - 18;
+    const footerY = doc.page.height - doc.page.margins.bottom - 15;
 
     doc.save();
     doc.fillColor(THEME.muted);
