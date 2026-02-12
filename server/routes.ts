@@ -262,22 +262,34 @@ export async function registerRoutes(app: Express) {
   // -----------------------------
   // PDF
   // -----------------------------
-  app.post("/api/pdf", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const body = PdfInputSchema.parse(req.body);
+app.post("/api/pdf", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const body = PdfInputSchema.parse(req.body);
 
-      const buf = await createPdfFromText({
-        title: safeTrim((body as any).title, "Document"),
-        content: body.content,
-      } as any);
+    const buf = await createPdfFromText({
+      title: safeTrim((body as any).title, "Document"),
+      content: body.content,
+    } as any);
 
-      res.setHeader("Content-Type", "application/pdf");
-      return res.status(200).send(buf);
-    } catch (e: any) {
-      return res.status(400).json({ error: e?.message || "PDF failed" });
+    // ✅ Guard: اگر خروجی PDF واقعی نبود، به جای PDF، خطا برگردون
+    if (!Buffer.isBuffer(buf) || buf.length < 10 || buf.subarray(0, 5).toString("utf8") !== "%PDF-") {
+      const preview = Buffer.isBuffer(buf) ? buf.toString("utf8").slice(0, 500) : String(buf);
+      return res.status(500).json({
+        error: "PDF generator returned non-PDF output",
+        preview,
+      });
     }
-  });
 
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="resume.pdf"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Length", String(buf.length));
+
+    return res.status(200).send(buf);
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || "PDF failed" });
+  }
+});
   // -----------------------------
   // (اختیاری) اگر جایی resume/upload داری، اینجا نگهش می‌داریم:
   // -----------------------------
